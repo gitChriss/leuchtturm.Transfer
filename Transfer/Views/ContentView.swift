@@ -290,7 +290,7 @@ struct ContentView: View {
 
         Task { @MainActor in
             for step in 1...100 {
-                try? await Task.sleep(nanoseconds: 30_000_000) // 0.03s
+                try? await Task.sleep(nanoseconds: 30_000_000)
 
                 if case .running(_, let keepFilename) = state {
                     state = .running(progress: Double(step) / 100.0, filename: keepFilename)

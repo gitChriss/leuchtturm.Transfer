@@ -12,8 +12,10 @@ enum AppConstants {
     // Brand
     static let accentHex = "#197663"
 
-    // API
-    static let apiBaseURLString = "https://api.fotostudio-sichtweisen.de"
+    // Defaults (initial values shown in Settings)
+    static let defaultSFTPHost = "www391.your-server.de"
+    static let defaultSFTPPort = 22
+    static let defaultAPIBaseURLString = "https://api.fotostudio-sichtweisen.de"
 
     // UI
     static let windowMinWidth: CGFloat = 520
