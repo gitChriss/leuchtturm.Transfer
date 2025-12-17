@@ -18,10 +18,11 @@ struct TransferApp: App {
         WindowGroup {
             ContentView()
                 .environment(settingsStore)
-                .frame(minWidth: AppConstants.windowMinWidth,
-                       minHeight: AppConstants.windowMinHeight)
+                .frame(width: AppConstants.windowMinWidth,
+                       height: AppConstants.windowMinHeight)
                 .tint(Color.accentColor)
         }
+        .windowResizability(.contentSize)
 
         Settings {
             SettingsView(store: settingsStore)

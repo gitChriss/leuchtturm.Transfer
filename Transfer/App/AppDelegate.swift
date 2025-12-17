@@ -10,30 +10,33 @@ import Foundation
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private let openFilesNotification = Notification.Name("transfer.openFileURLs")
+    static let openFilesNotification = Notification.Name("transfer.openFileURLs")
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        postOpenFiles(urls)
+        handle(urls: urls)
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
-        let url = URL(fileURLWithPath: filename)
-        postOpenFiles([url])
+        handle(urls: [URL(fileURLWithPath: filename)])
         return true
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        let urls = filenames.map { URL(fileURLWithPath: $0) }
-        postOpenFiles(urls)
+        handle(urls: filenames.map { URL(fileURLWithPath: $0) })
         sender.reply(toOpenOrPrint: .success)
     }
 
-    private func postOpenFiles(_ urls: [URL]) {
+    // MARK: - Core handler
+
+    private func handle(urls: [URL]) {
         let fileURLs = urls.filter { $0.isFileURL }
         guard fileURLs.isEmpty == false else { return }
 
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+
         NotificationCenter.default.post(
-            name: openFilesNotification,
+            name: Self.openFilesNotification,
             object: fileURLs
         )
     }
