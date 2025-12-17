@@ -23,6 +23,13 @@ final class SettingsStore {
         static let uploadToken  = "secrets.api.uploadToken"
     }
 
+    enum ConnectionStatus: Equatable {
+        case unknown
+        case checking
+        case ok
+        case failed(message: String)
+    }
+
     // FTP
     var sftpHost: String = AppConstants.defaultSFTPHost
     var sftpPort: Int = AppConstants.defaultSFTPPort
@@ -34,6 +41,9 @@ final class SettingsStore {
 
     // API
     var apiBaseURLString: String = AppConstants.defaultAPIBaseURLString
+
+    // Status
+    var sftpStatus: ConnectionStatus = .unknown
 
     var lastSaveMessage: String? = nil
 
@@ -57,6 +67,8 @@ final class SettingsStore {
 
         sftpPassword = KeychainService.readString(key: KeychainKeys.sftpPassword) ?? ""
         uploadToken  = KeychainService.readString(key: KeychainKeys.uploadToken) ?? ""
+
+        sftpStatus = .unknown
     }
 
     @discardableResult
@@ -71,6 +83,8 @@ final class SettingsStore {
 
         let ok = ok1 && ok2
         lastSaveMessage = ok ? "Gespeichert" : "Speichern fehlgeschlagen"
+
+        sftpStatus = .unknown
         return ok
     }
 
@@ -91,6 +105,7 @@ final class SettingsStore {
         sftpPassword = ""
         uploadToken = ""
 
+        sftpStatus = .unknown
         lastSaveMessage = "Gelöscht"
     }
 
@@ -101,5 +116,34 @@ final class SettingsStore {
         sftpPassword.isEmpty == false &&
         apiBaseURLString.isEmpty == false &&
         uploadToken.isEmpty == false
+    }
+
+    @MainActor
+    func checkSFTPConnection() async {
+        sftpStatus = .checking
+
+        let creds = SFTPService.Credentials(
+            host: sftpHost,
+            port: sftpPort,
+            username: sftpUsername,
+            password: sftpPassword
+        )
+
+        do {
+            try await SFTPService.testConnection(credentials: creds)
+            sftpStatus = .ok
+        } catch {
+            let msg: String
+            if let e = error as? LocalizedError, let d = e.errorDescription, d.isEmpty == false {
+                msg = d
+            } else {
+                msg = error.localizedDescription
+            }
+            sftpStatus = .failed(message: msg)
+        }
+    }
+
+    func resetSFTPStatus() {
+        sftpStatus = .unknown
     }
 }

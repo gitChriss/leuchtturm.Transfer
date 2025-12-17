@@ -6,10 +6,12 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
 struct TransferApp: App {
 
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var settingsStore = SettingsStore()
 
     var body: some Scene {
@@ -23,7 +25,9 @@ struct TransferApp: App {
 
         Settings {
             SettingsView(store: settingsStore)
-                .frame(width: 520, height: 380)
+                .environment(settingsStore)
+                .frame(width: AppConstants.settingsWindowWidth,
+                       height: AppConstants.settingsWindowHeight)
         }
     }
 }

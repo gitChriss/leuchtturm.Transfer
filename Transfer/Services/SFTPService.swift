@@ -99,6 +99,64 @@ enum SFTPService {
         }
     }
 
+    static func testConnection(credentials: Credentials) async throws {
+        let normalizedHost = try normalizeHost(credentials.host)
+        let username = normalizeSimple(credentials.username)
+
+        guard credentials.port > 0 && credentials.port < 65536 else {
+            throw SFTPError.invalidPort
+        }
+        guard username.isEmpty == false else {
+            throw SFTPError.invalidUsername
+        }
+
+        let task = Task.detached(priority: .userInitiated) { () async throws -> Void in
+            try Task.checkCancellation()
+
+            if libssh2_init(0) != 0 {
+                throw SFTPError.sshInitFailed
+            }
+            defer { libssh2_exit() }
+
+            let sock = try openTCPSocket(host: normalizedHost, port: credentials.port)
+            defer { close(sock) }
+
+            guard let session = libssh2_session_init_ex(nil, nil, nil, nil) else {
+                throw SFTPError.sshInitFailed
+            }
+            defer { libssh2_session_free(session) }
+
+            libssh2_session_set_blocking(session, 1)
+
+            if libssh2_session_handshake(session, sock) != 0 {
+                throw SFTPError.sshHandshakeFailed
+            }
+
+            let authRc = username.withCString { userPtr in
+                credentials.password.withCString { passPtr in
+                    libssh2_userauth_password_ex(
+                        session,
+                        userPtr,
+                        UInt32(strlen(userPtr)),
+                        passPtr,
+                        UInt32(strlen(passPtr)),
+                        nil
+                    )
+                }
+            }
+            if authRc != 0 {
+                throw SFTPError.authFailed
+            }
+
+            guard let sftp = libssh2_sftp_init(session) else {
+                throw SFTPError.sftpInitFailed
+            }
+            libssh2_sftp_shutdown(sftp)
+        }
+
+        try await task.value
+    }
+
     static func cleanupRemoteRoot(
         credentials: Credentials,
         remotePath: String = "/",
