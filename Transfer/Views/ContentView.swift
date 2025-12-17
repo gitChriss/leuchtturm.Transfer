@@ -124,8 +124,9 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
 
             case .failed:
-                Button("Retry") { job.retryIfPossible() }
+                Button("Retry") { retryWithLatestSettings() }
                     .buttonStyle(.borderedProminent)
+                    .disabled(settingsStore.hasMinimumCredentials == false)
 
                 Button("Zurücksetzen") { job.resetToIdle() }
                     .buttonStyle(.bordered)
@@ -302,7 +303,29 @@ struct ContentView: View {
             return
         }
 
-        job.start(fileURL: fileURL)
+        let snapshot = currentSettingsSnapshot()
+        job.start(fileURL: fileURL, settings: snapshot)
+    }
+
+    private func retryWithLatestSettings() {
+        guard settingsStore.hasMinimumCredentials else {
+            job.pushStatus("Retry blockiert. Bitte Settings vervollständigen.")
+            return
+        }
+
+        let snapshot = currentSettingsSnapshot()
+        job.retryIfPossible(settings: snapshot)
+    }
+
+    private func currentSettingsSnapshot() -> TransferJobCoordinator.SettingsSnapshot {
+        TransferJobCoordinator.SettingsSnapshot(
+            sftpHost: settingsStore.sftpHost,
+            sftpPort: settingsStore.sftpPort,
+            sftpUsername: settingsStore.sftpUsername,
+            sftpPassword: settingsStore.sftpPassword,
+            apiBaseURLString: settingsStore.apiBaseURLString,
+            uploadToken: settingsStore.uploadToken
+        )
     }
 
     // MARK: - Helpers
