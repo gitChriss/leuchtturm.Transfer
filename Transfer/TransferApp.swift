@@ -12,6 +12,9 @@ struct TransferApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .frame(minWidth: AppConstants.windowMinWidth,
+                       minHeight: AppConstants.windowMinHeight)
+                .tint(Color.accentColor)
         }
     }
 }
