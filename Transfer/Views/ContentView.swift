@@ -11,17 +11,10 @@ import AppKit
 
 struct ContentView: View {
 
-    enum JobState: Equatable {
-        case idle
-        case ready(fileURL: URL)
-        case running(progress: Double, filename: String)
-        case done(resultURL: URL)
-        case error(message: String)
-    }
+    @Environment(SettingsStore.self) private var settingsStore
 
     @State private var isDropTargeted: Bool = false
-    @State private var state: JobState = .idle
-    @State private var statusLines: [String] = []
+    @State private var job = TransferJobCoordinator()
 
     var body: some View {
         VStack(spacing: 16) {
@@ -37,7 +30,7 @@ struct ContentView: View {
         .padding(24)
         .onAppear {
             Log.info("App launched \(BuildInfo.fullVersionString)")
-            pushStatus("Bereit")
+            job.pushStatus("Bereit")
         }
     }
 
@@ -65,7 +58,7 @@ struct ContentView: View {
     private var dropZone: some View {
         VStack(spacing: 12) {
 
-            if case .running(let progress, _) = state {
+            if case .running(_, let progress, _) = job.state {
                 CircularProgressRing(progress: progress)
                     .frame(width: 72, height: 72)
                     .accessibilityLabel("Fortschritt")
@@ -106,16 +99,18 @@ struct ContentView: View {
 
     private var actionRow: some View {
         HStack(spacing: 10) {
-            switch state {
-            case .ready:
-                Button("Start") { startDummyRun() }
-                    .buttonStyle(.borderedProminent)
+            switch job.state {
 
-                Button("Zurücksetzen") { resetToIdle() }
+            case .ready(let fileURL):
+                Button("Start") { startJob(fileURL: fileURL) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(settingsStore.hasMinimumCredentials == false)
+
+                Button("Zurücksetzen") { job.resetToIdle() }
                     .buttonStyle(.bordered)
 
             case .running:
-                Button("Abbrechen") { cancelDummyRun() }
+                Button("Abbrechen") { job.cancel(); job.resetToIdle() }
                     .buttonStyle(.bordered)
 
             case .done(let resultURL):
@@ -125,18 +120,21 @@ struct ContentView: View {
                 Button("Open") { openURL(resultURL) }
                     .buttonStyle(.borderedProminent)
 
-                Button("Neue Datei") { resetToIdle() }
+                Button("Neue Datei") { job.resetToIdle() }
                     .buttonStyle(.bordered)
 
-            case .error:
-                Button("Retry") { resetToIdle() }
+            case .failed:
+                Button("Retry") { job.retryIfPossible() }
                     .buttonStyle(.borderedProminent)
+
+                Button("Zurücksetzen") { job.resetToIdle() }
+                    .buttonStyle(.bordered)
 
             default:
                 EmptyView()
             }
         }
-        .animation(.snappy, value: state)
+        .animation(.snappy, value: job.state)
     }
 
     private var statusArea: some View {
@@ -144,13 +142,23 @@ struct ContentView: View {
             Divider()
                 .padding(.top, 6)
 
-            Text("Status")
-                .font(.headline)
+            HStack {
+                Text("Status")
+                    .font(.headline)
+
+                Spacer()
+
+                if settingsStore.hasMinimumCredentials == false {
+                    Text("Settings fehlen")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(statusLines.indices.reversed(), id: \.self) { idx in
-                        Text(statusLines[idx])
+                    ForEach(job.statusLines.indices.reversed(), id: \.self) { idx in
+                        Text(job.statusLines[idx])
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,31 +189,47 @@ struct ContentView: View {
     // MARK: - Derived UI text
 
     private var headerSymbolName: String {
-        switch state {
+        switch job.state {
         case .done: return "checkmark.seal"
-        case .error: return "exclamationmark.triangle"
+        case .failed: return "exclamationmark.triangle"
         case .running: return "arrow.up.doc"
         default: return "arrow.up.doc"
         }
     }
 
     private var headerSubtitle: String {
-        switch state {
+        switch job.state {
         case .idle:
             return "Zieh eine Datei in dieses Fenster, um den Upload zu starten."
         case .ready:
+            if settingsStore.hasMinimumCredentials == false {
+                return "Datei erkannt. Bitte zuerst Settings vervollständigen."
+            }
             return "Datei erkannt. Du kannst jetzt den Upload starten."
-        case .running:
-            return "Upload und Verarbeitung laufen."
+        case .running(let phase, _, _):
+            return subtitleForPhase(phase)
         case .done:
             return "Fertig. Link ist bereit."
-        case .error(let message):
+        case .failed(let message):
             return message
         }
     }
 
+    private func subtitleForPhase(_ phase: TransferJobCoordinator.Phase) -> String {
+        switch phase {
+        case .cleaning:
+            return "Remote wird geleert."
+        case .uploading:
+            return "Upload läuft."
+        case .triggering:
+            return "API wird gestartet."
+        case .polling:
+            return "Verarbeitung läuft."
+        }
+    }
+
     private var dropZoneTitle: String {
-        switch state {
+        switch job.state {
         case .idle:
             return isDropTargeted ? "Loslassen zum Auswählen" : "Datei hier ablegen"
         case .ready:
@@ -214,20 +238,20 @@ struct ContentView: View {
             return "Bitte warten"
         case .done:
             return "Ergebnis"
-        case .error:
+        case .failed:
             return "Fehler"
         }
     }
 
     private var dropZoneDetailText: String? {
-        switch state {
+        switch job.state {
         case .ready(let fileURL):
             return fileURL.lastPathComponent
-        case .running(let progress, _):
+        case .running(_, let progress, _):
             return "\(Int(progress * 100)) %"
         case .done(let url):
             return url.absoluteString
-        case .error(let message):
+        case .failed(let message):
             return message
         default:
             return "Nur eine Datei. Ein Job zur Zeit."
@@ -235,27 +259,22 @@ struct ContentView: View {
     }
 
     private var borderColor: Color {
-        if case .running = state { return .secondary.opacity(0.6) }
-        if case .done = state { return .green.opacity(0.7) }
-        if case .error = state { return .red.opacity(0.7) }
+        if case .running = job.state { return .secondary.opacity(0.6) }
+        if case .done = job.state { return .green.opacity(0.7) }
+        if case .failed = job.state { return .red.opacity(0.7) }
         return isDropTargeted ? Color.accentColor.opacity(0.9) : Color.secondary.opacity(0.35)
-    }
-
-    private var isBusy: Bool {
-        if case .running = state { return true }
-        return false
     }
 
     // MARK: - Drop handling
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard isBusy == false else {
-            pushStatus("Drop ignoriert. Job läuft bereits.")
+        guard job.isBusy == false else {
+            job.pushStatus("Drop ignoriert. Job läuft bereits.")
             return false
         }
 
         guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
-            pushStatus("Drop fehlgeschlagen. Keine Datei-URL.")
+            job.pushStatus("Drop fehlgeschlagen. Keine Datei-URL.")
             return false
         }
 
@@ -263,75 +282,40 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 guard let data = item as? Data,
                       let url = URL(dataRepresentation: data, relativeTo: nil) else {
-                    state = .error(message: "Datei konnte nicht gelesen werden.")
-                    pushStatus("Fehler beim Lesen der Datei.")
+                    job.pushStatus("Fehler beim Lesen der Datei.")
+                    job.resetToIdle()
                     return
                 }
 
-                state = .ready(fileURL: url)
-                pushStatus("Datei ausgewählt: \(url.lastPathComponent)")
+                _ = job.acceptDroppedFile(url)
             }
         }
 
         return true
     }
 
-    // MARK: - Actions (dummy for Chunk 2)
+    // MARK: - Actions
 
-    private func startDummyRun() {
-        guard case .ready(let fileURL) = state else { return }
-
-        let filename = fileURL.lastPathComponent
-
-        pushStatus("Start: \(filename)")
-        pushStatus("Hinweis: Upload und API kommen in späteren Chunks.")
-
-        state = .running(progress: 0.0, filename: filename)
-
-        Task { @MainActor in
-            for step in 1...100 {
-                try? await Task.sleep(nanoseconds: 30_000_000)
-
-                if case .running(_, let keepFilename) = state {
-                    state = .running(progress: Double(step) / 100.0, filename: keepFilename)
-                } else {
-                    return
-                }
-            }
-
-            if case .running(_, let finalFilename) = state {
-                let demo = URL(string: "https://transfer.fotostudio-sichtweisen.de/\(finalFilename)")!
-                state = .done(resultURL: demo)
-                pushStatus("Done: \(demo.absoluteString)")
-            }
+    private func startJob(fileURL: URL) {
+        guard settingsStore.hasMinimumCredentials else {
+            job.pushStatus("Start blockiert. Bitte Settings vervollständigen.")
+            return
         }
-    }
 
-    private func cancelDummyRun() {
-        pushStatus("Abgebrochen")
-        resetToIdle()
-    }
-
-    private func resetToIdle() {
-        state = .idle
-        pushStatus("Zurückgesetzt")
+        job.start(fileURL: fileURL)
     }
 
     // MARK: - Helpers
 
-    private func pushStatus(_ line: String) {
-        statusLines.append(line)
-    }
-
     private func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        pushStatus("Link kopiert")
+        job.pushStatus("Link kopiert")
     }
 
     private func openURL(_ url: URL) {
         NSWorkspace.shared.open(url)
-        pushStatus("Link geöffnet")
+        job.pushStatus("Link geöffnet")
     }
 }
 
